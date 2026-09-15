@@ -20,6 +20,9 @@ namespace Ui {
 class ImportDXFDialog;
 }
 
+/*! Marks an unset value of the geographic location read from the DXF header. */
+const double UNSET_GEO_COORDINATE = 1e30;
+
 class ImportDXFDialog : public QDialog
 {
 	Q_OBJECT
@@ -118,6 +121,24 @@ private:
 	/*! Writes a message into the georeferencing info label. */
 	void setGeoreferenceInfo(const QString & text, bool warning);
 
+	/*! Tries to determine the coordinate reference system from the drawing data, when the file itself
+		carries none and the user entered none.
+
+		A system that follows unambiguously from the data (geographic location in the DXF header, or the
+		UTM zone of the project) is applied right away. A system that is only inferred from the shape of
+		the coordinates (Gauss-Krueger zone, last used system) is proposed in the line edit and has to be
+		confirmed, because guessing the datum wrong displaces the drawing by about a hundred meters.
+
+		\param log Receives log messages shown in the log window.
+		Returns true if a system was applied or proposed.
+	*/
+	bool inferCoordinateSystem(QString & log);
+
+	/*! Reports a drawing that is given in projected map coordinates but imported unreferenced, since it
+		then ends up far away from the project origin and the scene looks empty.
+	*/
+	void warnIfFarFromOrigin(QString & log);
+
 	/*! Places the drawing in the UTM system of the project, sets offset, rotation and scaling factor.
 		\param log Receives log messages shown in the log window.
 		Returns false if no placement could be computed, the caller then falls back to the
@@ -152,6 +173,11 @@ private:
 
 	/*! Dxf Scaling factor from "$INSUNIT". */
 	std::string				m_dxfScalingUnit = "";
+
+	/*! Geographic location from the "$LATITUDE"/"$LONGITUDE" header variables in [deg],
+		UNSET_GEO_COORDINATE if the DXF does not define it. */
+	double					m_dxfLatitude = UNSET_GEO_COORDINATE;
+	double					m_dxfLongitude = UNSET_GEO_COORDINATE;
 
 	/*! Coordinate reference system of the DXF file, detected or entered by the user. */
 	Georeferencing::CoordinateSystem	m_coordinateSystem;
@@ -194,11 +220,16 @@ class DRW_InterfaceImpl : public DRW_Interface {
 
 	std::string			*m_dxfScalingUnit = nullptr;
 
+	double				*m_dxfLatitude = nullptr;
+
+	double				*m_dxfLongitude = nullptr;
+
 public :
 
 	/*! C'tor */
 	DRW_InterfaceImpl(Drawing *drawing, double *dxfScalingFactor,
-					  std::string *dxfScalingUnit, unsigned int &nextId);
+					  std::string *dxfScalingUnit, double *dxfLatitude, double *dxfLongitude,
+					  unsigned int &nextId);
 
 	/** Called when header is parsed.  */
 	void addHeader(const DRW_Header* data) override;

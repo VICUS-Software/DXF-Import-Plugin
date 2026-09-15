@@ -101,6 +101,19 @@ public:
 	/*! Returns the UTM zone stored in the given CRS, or -1 if it is not a UTM system. */
 	static int utmZone(const CoordinateSystem & crs, bool & north);
 
+	/*! Returns the UTM coordinate system of the given zone on the WGS84 datum.
+		Used to name a system that was derived from the data rather than read from the file.
+	*/
+	static CoordinateSystem utmSystem(int utmZone, bool north);
+
+	/*! Converts a point from coordinates of 'crs' to geographic coordinates on the WGS84 datum.
+		\param lon Receives the longitude in [deg].
+		\param lat Receives the latitude in [deg].
+		Returns false if the point cannot be converted, for example because the CRS is not projected.
+	*/
+	static bool toGeographic(const CoordinateSystem & crs, const IBKMK::Vector2D & point,
+							 double & lon, double & lat);
+
 	/*! Returns the UTM zone the given point falls into.
 		\param point Point in CRS coordinates of 'crs'.
 		\param north Receives the hemisphere.

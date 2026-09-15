@@ -4,6 +4,7 @@
 #include <QMessageBox>
 #include <QFileInfo>
 #include <QTimer>
+#include <QSettings>
 
 #include <cmath>
 #include <limits>
@@ -282,27 +283,16 @@ void ImportDXFDialog::on_pushButtonConvert_clicked() {
 		log += QString("\nPLEASE MIND: Currently are no hatchings supported.\n");
 
 		m_georeferenced = false;
+
+		// neither the file nor the user named a system - see whether the data tells us
+		bool inferred = false;
+		if (!m_ui->checkBoxGeoreference->isChecked() && m_ui->lineEditCRS->text().trimmed().isEmpty())
+			inferred = inferCoordinateSystem(log);
+
 		if (m_ui->checkBoxGeoreference->isChecked())
 			m_georeferenced = applyGeoreferencing(log);
-		else {
-			// A drawing given in projected map coordinates (UTM, Gauss-Krueger, ...) ends up millions of
-			// meters away from the project origin when it is imported unreferenced - that looks like an
-			// empty scene and is easy to mistake for a broken import, so point it out.
-			double FAR_FROM_ORIGIN = 10000; // no local CAD drawing sits 10 km from its own origin
-			IBKMK::Vector2D ref = referencePoint(m_drawing);
-			double refX = std::fabs(ref.m_x * m_drawing.m_scalingFactor);
-			double refY = std::fabs(ref.m_y * m_drawing.m_scalingFactor);
-			if (refX > FAR_FROM_ORIGIN || refY > FAR_FROM_ORIGIN) {
-				setGeoreferenceInfo(tr("The drawing sits at %L1 / %L2, which looks like projected map "
-									   "coordinates. Enter its coordinate reference system above to place "
-									   "it correctly - otherwise it ends up that far from the project "
-									   "origin and you will not see it.")
-									.arg(refX, 0, 'f', 0).arg(refY, 0, 'f', 0), true);
-				log += QString("Drawing center at %1 / %2 looks like projected map coordinates, "
-							   "but no coordinate reference system was given.\n")
-					   .arg(refX, 0, 'f', 0).arg(refY, 0, 'f', 0);
-			}
-		}
+		else if (!inferred)
+			warnIfFarFromOrigin(log);
 
 		// the georeferenced offset is already absolute, only the centering offset is in drawing units
 		if (!m_georeferenced)
@@ -517,6 +507,145 @@ IBKMK::Vector2D ImportDXFDialog::referencePoint(const Drawing & drawing) {
 }
 
 
+namespace {
+
+/*! Key the last coordinate reference system the user confirmed is stored under. */
+const char * const LAST_CRS_SETTING = "Georeferencing/lastCoordinateSystem";
+
+/*! True if the coordinates have the magnitude of a UTM easting/northing pair. */
+bool looksLikeUtm(const IBKMK::Vector2D & p) {
+	return (p.m_x > 100000 && p.m_x < 1000000 && p.m_y > 1000000 && p.m_y < 10000000);
+}
+
+/*! Returns the Gauss-Krueger zone encoded in the easting, or -1 if the coordinates do not have that
+	shape. A Gauss-Krueger easting is  zone*1e6 + 500000 +- a few hundred kilometers.
+*/
+int gaussKruegerZone(const IBKMK::Vector2D & p) {
+	if (p.m_y < 4000000 || p.m_y > 7000000)
+		return -1;
+	int zone = (int)std::floor(p.m_x/1000000.0);
+	if (zone < 2 || zone > 5)
+		return -1;
+	double easting = p.m_x - zone*1000000.0;
+	if (easting < 300000 || easting > 700000)
+		return -1;
+	return zone;
+}
+
+} // namespace
+
+
+bool ImportDXFDialog::inferCoordinateSystem(QString & log) {
+	IBKMK::Vector2D ref = referencePoint(m_drawing);
+
+	// The system the user confirmed last. Where we know the zone but not the datum, this fills that gap:
+	// EPSG:25832 and EPSG:32632 are the same zone but different datums, about a meter apart.
+	QSettings settings("VICUS", "DXFImportPlugin");
+	QString lastCrsText = settings.value(LAST_CRS_SETTING).toString();
+	Georeferencing::CoordinateSystem lastCrs;
+	bool lastNorth = true;
+	int lastZone = -1;
+	if (!lastCrsText.isEmpty()) {
+		lastCrs = Georeferencing::fromUserInput(lastCrsText);
+		if (lastCrs.isValid())
+			lastZone = Georeferencing::utmZone(lastCrs, lastNorth);
+	}
+
+	// Returns the UTM system of the given zone, preferring the last confirmed system when it covers
+	// exactly that zone.
+	auto systemForZone = [&](int zone, bool north) {
+		if (lastZone == zone && lastNorth == north)
+			return lastCrs;
+		return Georeferencing::utmSystem(zone, north);
+	};
+
+	Georeferencing::CoordinateSystem crs;
+	QString source;
+	bool confident = false;
+
+	// 1) the DXF header names the site of the drawing - that fixes the zone
+	if (m_dxfLatitude < UNSET_GEO_COORDINATE && m_dxfLongitude < UNSET_GEO_COORDINATE && looksLikeUtm(ref)) {
+		int zone = (int)std::floor((m_dxfLongitude + 180.0)/6.0) + 1;
+		crs = systemForZone(zone, m_dxfLatitude >= 0);
+		source = tr("the geographic location stored in the DXF header");
+		confident = true;
+	}
+	// 2) the project already works in a UTM zone, so a UTM drawing is in that zone
+	else if (m_haveProjectOrigin && looksLikeUtm(ref)) {
+		crs = systemForZone(m_worldUtmZone, m_worldNorth);
+		source = tr("the UTM zone of the project");
+		confident = true;
+	}
+	// 3) a Gauss-Krueger easting carries its zone, but not its datum - DHDN is the common case and
+	//    picking the wrong datum displaces the drawing by about a hundred meters, so ask
+	else if (gaussKruegerZone(ref) > 0) {
+		int zone = gaussKruegerZone(ref);
+		crs = Georeferencing::fromUserInput(QString("EPSG:%1").arg(31464 + zone));
+		source = tr("the Gauss-Krueger zone %1 of the easting, assuming the DHDN datum").arg(zone);
+	}
+	// 4) fall back to what the user confirmed the last time - usually the same region
+	else if (looksLikeUtm(ref) && lastCrs.isValid()) {
+		crs = lastCrs;
+		source = tr("the coordinate reference system you used last");
+	}
+
+	if (!crs.isValid())
+		return false;
+
+	m_coordinateSystem = crs;
+	m_ui->lineEditCRS->setText(crs.m_name);
+
+	// name the spot the drawing would end up at, so that a wrong guess is easy to spot
+	QString position;
+	double lon = 0, lat = 0;
+	if (Georeferencing::toGeographic(crs, ref, lon, lat))
+		position = tr(" The drawing then sits at %L1\u00b0 %2 / %L3\u00b0 %4.")
+				   .arg(std::fabs(lat), 0, 'f', 4).arg(lat >= 0 ? tr("N") : tr("S"))
+				   .arg(std::fabs(lon), 0, 'f', 4).arg(lon >= 0 ? tr("E") : tr("W"));
+
+	if (confident) {
+		m_ui->checkBoxGeoreference->setChecked(true);
+		setGeoreferenceInfo(tr("Coordinate reference system %1 derived from %2.%3")
+							.arg(crs.m_name).arg(source).arg(position), false);
+		log += QString("Coordinate reference system %1 derived from %2.\n")
+			   .arg(crs.m_name).arg(source);
+	}
+	else {
+		// a guess must not be applied behind the user's back
+		setGeoreferenceInfo(tr("The coordinates suggest %1, derived from %2.%3 Please check it and switch "
+							   "georeferencing on, then convert again.")
+							.arg(crs.m_name).arg(source).arg(position), true);
+		log += QString("Coordinate reference system %1 suggested from %2, waiting for confirmation.\n")
+			   .arg(crs.m_name).arg(source);
+	}
+
+	updateGeoreferenceControls();
+	return true;
+}
+
+
+void ImportDXFDialog::warnIfFarFromOrigin(QString & log) {
+	// A drawing given in projected map coordinates (UTM, Gauss-Krueger, ...) ends up millions of
+	// meters away from the project origin when it is imported unreferenced - that looks like an
+	// empty scene and is easy to mistake for a broken import, so point it out.
+	const double FAR_FROM_ORIGIN = 10000; // no local CAD drawing sits 10 km from its own origin
+
+	IBKMK::Vector2D ref = referencePoint(m_drawing);
+	double refX = std::fabs(ref.m_x * m_drawing.m_scalingFactor);
+	double refY = std::fabs(ref.m_y * m_drawing.m_scalingFactor);
+	if (refX <= FAR_FROM_ORIGIN && refY <= FAR_FROM_ORIGIN)
+		return;
+
+	setGeoreferenceInfo(tr("The drawing sits at %L1 / %L2, which looks like projected map coordinates. "
+						   "Enter its coordinate reference system above to place it correctly - otherwise "
+						   "it ends up that far from the project origin and you will not see it.")
+						.arg(refX, 0, 'f', 0).arg(refY, 0, 'f', 0), true);
+	log += QString("Drawing center at %1 / %2 looks like projected map coordinates, "
+				   "but no coordinate reference system was given.\n")
+		   .arg(refX, 0, 'f', 0).arg(refY, 0, 'f', 0);
+}
+
+
 bool ImportDXFDialog::applyGeoreferencing(QString & log) {
 	QString crsText = m_ui->lineEditCRS->text().trimmed();
 
@@ -586,6 +715,10 @@ bool ImportDXFDialog::applyGeoreferencing(QString & log) {
 	log += QString("Rotation: %1 deg, scaling factor: %2\n").arg(rotationInDeg, 0, 'f', 4).arg(placement.m_scale);
 	log += QString("---------------------------------------------------------\n");
 
+	// remember it, the next drawing is usually from the same region
+	QSettings settings("VICUS", "DXFImportPlugin");
+	settings.setValue(LAST_CRS_SETTING, crs.m_name);
+
 	return true;
 }
 
@@ -599,7 +732,8 @@ void ImportDXFDialog::updateImportButtonEnabledState() {
 
 
 bool ImportDXFDialog::readDxfFile(Drawing &drawing, const QString &fname) {
-	DRW_InterfaceImpl drwIntImpl(&drawing, &m_dxfScalingFactor, &m_dxfScalingUnit, m_nextId);
+	DRW_InterfaceImpl drwIntImpl(&drawing, &m_dxfScalingFactor, &m_dxfScalingUnit,
+								 &m_dxfLatitude, &m_dxfLongitude, m_nextId);
 	//	dxfRW dxf(fname.toStdString().c_str());
 	dxfRW dxf(fname.toStdString());
 
@@ -715,11 +849,14 @@ void ImportDXFDialog::on_comboBoxUnit_activated(int index) {
 
 
 DRW_InterfaceImpl::DRW_InterfaceImpl(Drawing *drawing, double *dxfScalingFactor,
-									 std::string *dxfScalingUnit, unsigned int &nextId) :
+									 std::string *dxfScalingUnit, double *dxfLatitude, double *dxfLongitude,
+									 unsigned int &nextId) :
 	m_drawing(drawing),
 	m_nextId(&nextId),
 	m_dxfScalingFactor(dxfScalingFactor),
-	m_dxfScalingUnit(dxfScalingUnit)
+	m_dxfScalingUnit(dxfScalingUnit),
+	m_dxfLatitude(dxfLatitude),
+	m_dxfLongitude(dxfLongitude)
 {}
 
 // Function to get the unit name and scaling factor relative to meters from INSUNITS value
@@ -759,6 +896,29 @@ std::pair<std::string, double> getUnitInfo(int insunits) {
 }
 
 void DRW_InterfaceImpl::addHeader(const DRW_Header* data){
+
+	// AutoCAD stores the site of the drawing here. A drawing that was never located carries the
+	// AutoCAD default (San Francisco), which tells us nothing.
+	const double DEFAULT_LATITUDE = 37.795;
+	const double DEFAULT_LONGITUDE = -122.394;
+
+	auto readDouble = [&](const char * name, double * target) {
+		if (target == nullptr || data->vars.find(name) == data->vars.end())
+			return;
+		DRW_Variant *v = data->vars.at(name);
+		if (v != nullptr)
+			*target = v->content.d;
+	};
+	readDouble("$LATITUDE", m_dxfLatitude);
+	readDouble("$LONGITUDE", m_dxfLongitude);
+
+	if (m_dxfLatitude != nullptr && m_dxfLongitude != nullptr &&
+		IBK::near_equal(*m_dxfLatitude, DEFAULT_LATITUDE) && IBK::near_equal(*m_dxfLongitude, DEFAULT_LONGITUDE))
+	{
+		*m_dxfLatitude = UNSET_GEO_COORDINATE;
+		*m_dxfLongitude = UNSET_GEO_COORDINATE;
+	}
+
 	if (data->vars.find("$INSUNITS") == data->vars.end())
 		return;
 

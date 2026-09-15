@@ -58,7 +58,11 @@ The host app (SIM-VICUS) loads this plugin at runtime, calls `setLanguage()` for
 - **`Utilities.h/cpp`** — Unique name generation, XML template helpers
 - **`RotationMatrix.h`** — 3D rotation via QQuaternion + GLM
 - **`Georeferencing.h/cpp`** — reads the coordinate reference system of a DXF (`.prj` sidecar or
-  `AcDbGeoData` object) and computes the placement of the drawing in the UTM system of the project
+  `AcDbGeoData` object) and computes the placement of the drawing in the UTM system of the project.
+  When the file names no system, `ImportDXFDialog::inferCoordinateSystem()` derives one from the data:
+  the `$LATITUDE`/`$LONGITUDE` header variables or the UTM zone of the project are applied directly, a
+  Gauss-Krueger zone read off the easting or the last confirmed system are only proposed (the datum
+  does not follow from the coordinates, and guessing it wrong displaces the drawing by ~100 m)
 
 ### Vendored Dependencies (`externals/`)
 | Library | Purpose |

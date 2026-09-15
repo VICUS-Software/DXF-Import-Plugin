@@ -241,32 +241,54 @@ int Georeferencing::utmZone(const CoordinateSystem & crs, bool & north) {
 }
 
 
-int Georeferencing::utmZoneForPoint(const CoordinateSystem & crs, const IBKMK::Vector2D & point, bool & north) {
-	north = true;
+Georeferencing::CoordinateSystem Georeferencing::utmSystem(int utmZone, bool north) {
+	CoordinateSystem crs;
+	if (utmZone < 1 || utmZone > 60)
+		return crs;
+
+	QuietGDALErrors quiet;
+
+	OGRSpatialReference srs;
+	setupUtm(srs, utmZone, north);
+	storeSpatialReference(srs, crs);
+	return crs;
+}
+
+
+bool Georeferencing::toGeographic(const CoordinateSystem & crs, const IBKMK::Vector2D & point,
+								  double & lon, double & lat) {
 	if (!crs.isValid())
-		return -1;
+		return false;
 
 	QuietGDALErrors quiet;
 
 	OGRSpatialReference srs;
 	if (srs.importFromWkt(crs.m_wkt.toUtf8().constData()) != OGRERR_NONE)
-		return -1;
+		return false;
 	srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
 
 	OGRSpatialReference wgs84;
 	wgs84.SetWellKnownGeogCS("WGS84");
 	wgs84.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
 
-	double lon = point.m_x;
-	double lat = point.m_y;
+	lon = point.m_x;
+	lat = point.m_y;
 
 	if (!srs.IsSame(&wgs84)) {
 		std::unique_ptr<OGRCoordinateTransformation> ct(OGRCreateCoordinateTransformation(&srs, &wgs84));
 		if (ct == nullptr || !ct->Transform(1, &lon, &lat))
-			return -1;
+			return false;
 	}
 
-	if (lon < -180 || lon > 180 || lat < -90 || lat > 90)
+	return (lon >= -180 && lon <= 180 && lat >= -90 && lat <= 90);
+}
+
+
+int Georeferencing::utmZoneForPoint(const CoordinateSystem & crs, const IBKMK::Vector2D & point, bool & north) {
+	north = true;
+
+	double lon = 0, lat = 0;
+	if (!toGeographic(crs, point, lon, lat))
 		return -1;
 
 	north = (lat >= 0);
