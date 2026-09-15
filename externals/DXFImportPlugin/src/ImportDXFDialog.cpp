@@ -239,6 +239,8 @@ void ImportDXFDialog::on_pushButtonConvert_clicked() {
 
 			if (foundAutoScaling) {
 				log += QString("Found auto scaling unit: %1 m\n").arg(scalingFactor[SU_Auto]);
+				// take the auto-determined unit; the message box below may still override it
+				m_drawing.m_scalingFactor = scalingFactor[SU_Auto];
 				if (!IBK::near_equal(scalingFactor[SU_Auto], m_dxfScalingFactor)) {
 					log += QString("Scaling factor from header does not match auto-determined scale factor.\n");
 
@@ -276,20 +278,28 @@ void ImportDXFDialog::on_pushButtonConvert_clicked() {
 					qDebug() << "Current scaling factor is: " << m_drawing.m_scalingFactor;
 				}
 			}
-			else
+			else {
+				// no auto unit - the header is the next best source, millimeters are the last resort
+				if (!m_dxfScalingUnit.empty())
+					scalingFactor[SU_Auto] = m_dxfScalingFactor;
+				m_drawing.m_scalingFactor = scalingFactor[SU_Auto];
 				log += QString("Could not find auto scaling unit. Taking: %1 m\n").arg(scalingFactor[SU_Auto]);
+			}
 		}
 		else
 			m_drawing.m_scalingFactor = scalingFactor[su];
 
-		log += QString("Current dimensions - X: %1 Y: %2 Z: %3\n").arg(scalingFactor[su] * bounding.m_x)
-				.arg(scalingFactor[su] * bounding.m_y)
-				.arg(scalingFactor[su] * bounding.m_z);
+		// report what is actually used - in auto mode that may be the header factor, not scalingFactor[su]
+		double usedScaling = m_drawing.m_scalingFactor;
+
+		log += QString("Current dimensions - X: %1 Y: %2 Z: %3\n").arg(usedScaling * bounding.m_x)
+				.arg(usedScaling * bounding.m_y)
+				.arg(usedScaling * bounding.m_z);
 
 		log += QString("Current center - X: %1 Y: %2 Z: %3\n")
-				.arg(scalingFactor[su] * m_drawing.m_offset.m_x,
-					 scalingFactor[su] * m_drawing.m_offset.m_y,
-					 scalingFactor[su] * m_drawing.m_offset.m_z);
+				.arg(usedScaling * m_drawing.m_offset.m_x)
+				.arg(usedScaling * m_drawing.m_offset.m_y)
+				.arg(usedScaling * m_drawing.m_offset.m_z);
 		log += QString("---------------------------------------------------------\n");
 		log += QString("\nPLEASE MIND: Currently are no hatchings supported.\n");
 
@@ -572,7 +582,10 @@ int gaussKruegerZone(const IBKMK::Vector2D & p) {
 
 
 bool ImportDXFDialog::inferCoordinateSystem(QString & log) {
-	IBKMK::Vector2D ref = referencePoint(m_drawing);
+	// The heuristics below judge the magnitude of map coordinates, so they need meters. Without an
+	// AcDbGeoData object the drawing coordinates are the CRS coordinates, scaled by the drawing unit -
+	// this is exactly what applyGeoreferencing() feeds into Georeferencing::drawingToCRS().
+	IBKMK::Vector2D ref = referencePoint(m_drawing) * m_drawing.m_scalingFactor;
 
 	// The system the user confirmed last. Where we know the zone but not the datum, this fills that gap:
 	// EPSG:25832 and EPSG:32632 are the same zone but different datums, about a meter apart.
@@ -938,28 +951,43 @@ void DRW_InterfaceImpl::addHeader(const DRW_Header* data){
 	const double DEFAULT_LATITUDE = 37.795;
 	const double DEFAULT_LONGITUDE = -122.394;
 
+	// DRW_Variant::content is a union, the active member depends on the group code the reader saw -
+	// reading the wrong one yields a reinterpreted pointer, so check the type first
 	auto readDouble = [&](const char * name, double * target) {
-		if (target == nullptr || data->vars.find(name) == data->vars.end())
+		if (target == nullptr)
 			return;
-		DRW_Variant *v = data->vars.at(name);
-		if (v != nullptr)
-			*target = v->content.d;
+		auto it = data->vars.find(name);
+		if (it == data->vars.end() || it->second == nullptr)
+			return;
+		if (it->second->type() != DRW_Variant::DOUBLE)
+			return;
+		*target = it->second->content.d;
 	};
 	readDouble("$LATITUDE", m_dxfLatitude);
 	readDouble("$LONGITUDE", m_dxfLongitude);
 
-	if (m_dxfLatitude != nullptr && m_dxfLongitude != nullptr &&
-		IBK::near_equal(*m_dxfLatitude, DEFAULT_LATITUDE) && IBK::near_equal(*m_dxfLongitude, DEFAULT_LONGITUDE))
-	{
-		*m_dxfLatitude = UNSET_GEO_COORDINATE;
-		*m_dxfLongitude = UNSET_GEO_COORDINATE;
+	// A location we cannot trust is worse than none: inferCoordinateSystem() applies a system derived
+	// from it without asking, so anything but a plausible site must fall back to "unset" here.
+	if (m_dxfLatitude != nullptr && m_dxfLongitude != nullptr) {
+		bool haveBoth     = *m_dxfLatitude < UNSET_GEO_COORDINATE && *m_dxfLongitude < UNSET_GEO_COORDINATE;
+		bool inRange      = std::fabs(*m_dxfLatitude) <= 90 && std::fabs(*m_dxfLongitude) <= 180;
+		// (0,0) is in the Gulf of Guinea - in practice it means the variable was never set
+		bool nullIsland   = IBK::near_zero(*m_dxfLatitude) && IBK::near_zero(*m_dxfLongitude);
+		bool autoCadSite  = IBK::near_equal(*m_dxfLatitude, DEFAULT_LATITUDE) &&
+							IBK::near_equal(*m_dxfLongitude, DEFAULT_LONGITUDE);
+
+		if (!haveBoth || !inRange || nullIsland || autoCadSite) {
+			*m_dxfLatitude = UNSET_GEO_COORDINATE;
+			*m_dxfLongitude = UNSET_GEO_COORDINATE;
+		}
 	}
 
-	if (data->vars.find("$INSUNITS") == data->vars.end())
+	auto itUnits = data->vars.find("$INSUNITS");
+	if (itUnits == data->vars.end() || itUnits->second == nullptr)
 		return;
 
-	DRW_Variant *var = data->vars.at("$INSUNITS");
-	if (var == nullptr)
+	DRW_Variant *var = itUnits->second;
+	if (var->type() != DRW_Variant::INTEGER)
 		return;
 
 	int unitCode = var->content.i;
