@@ -27,65 +27,47 @@
      </property>
     </widget>
    </item>
-   <item row="7" column="0" colspan="2">
+   <item row="9" column="0" colspan="2">
     <widget class="QPlainTextEdit" name="plainTextEditLogWindow"/>
    </item>
    <item row="2" column="0" colspan="2">
-    <widget class="QWidget" name="widgetGeoreferencing" native="true">
-     <layout class="QGridLayout" name="gridLayoutGeoreferencing">
-      <property name="leftMargin">
-       <number>0</number>
-      </property>
-      <property name="topMargin">
-       <number>0</number>
-      </property>
-      <property name="rightMargin">
-       <number>0</number>
-      </property>
-      <property name="bottomMargin">
-       <number>0</number>
-      </property>
-      <item row="1" column="0">
-       <widget class="QLabel" name="labelCRS">
-        <property name="text">
-         <string>Coordinate reference system:</string>
-        </property>
-       </widget>
-      </item>
-      <item row="1" column="1">
-       <widget class="QLineEdit" name="lineEditCRS">
-        <property name="toolTip">
-         <string>Coordinate reference system of the drawing, for example EPSG:25832. Detected automatically from a '.prj' file next to the DXF or from an AcDbGeoData object inside it.</string>
-        </property>
-        <property name="placeholderText">
-         <string>EPSG:25832</string>
-        </property>
-       </widget>
-      </item>
-      <item row="0" column="0" colspan="2">
-       <widget class="QCheckBox" name="checkBoxGeoreference">
-        <property name="toolTip">
-         <string>Places the drawing at its real world position, using the coordinate reference system above.</string>
-        </property>
-        <property name="text">
-         <string>Use georeferencing</string>
-        </property>
-       </widget>
-      </item>
-      <item row="2" column="0" colspan="2">
-       <widget class="QtExt::SmartLabel" name="labelGeoreferenceInfo">
-        <property name="text">
-         <string/>
-        </property>
-        <property name="wordWrap">
-         <bool>true</bool>
-        </property>
-       </widget>
-      </item>
-     </layout>
+    <widget class="QCheckBox" name="checkBoxGeoreference">
+     <property name="toolTip">
+      <string>Places the drawing at its real world position, using the coordinate reference system above.</string>
+     </property>
+     <property name="text">
+      <string>Use georeferencing</string>
+     </property>
+    </widget>
+   </item>
+   <item row="3" column="0">
+    <widget class="QLabel" name="labelCRS">
+     <property name="text">
+      <string>Coordinate reference system:</string>
+     </property>
+    </widget>
+   </item>
+   <item row="3" column="1">
+    <widget class="QLineEdit" name="lineEditCRS">
+     <property name="toolTip">
+      <string>Coordinate reference system of the drawing, for example EPSG:25832. Detected automatically from a '.prj' file next to the DXF or from an AcDbGeoData object inside it.</string>
+     </property>
+     <property name="placeholderText">
+      <string>EPSG:25832</string>
+     </property>
     </widget>
    </item>
    <item row="4" column="0" colspan="2">
+    <widget class="QtExt::SmartLabel" name="labelGeoreferenceInfo">
+     <property name="text">
+      <string/>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item row="6" column="0" colspan="2">
     <widget class="QGroupBox" name="groupBox">
      <property name="title">
       <string>Settings</string>
@@ -168,7 +150,7 @@
      </property>
     </widget>
    </item>
-   <item row="3" column="0" colspan="2">
+   <item row="5" column="0" colspan="2">
     <widget class="QCheckBox" name="checkBoxShowDetails">
      <property name="text">
       <string>show detailed settings</string>
@@ -178,7 +160,7 @@
      </property>
     </widget>
    </item>
-   <item row="5" column="0" colspan="2">
+   <item row="7" column="0" colspan="2">
     <layout class="QHBoxLayout" name="horizontalLayoutConvert">
      <item>
       <widget class="QPushButton" name="pushButtonConvert">
@@ -214,7 +196,7 @@
    <item row="1" column="1">
     <widget class="QComboBox" name="comboBoxUnit"/>
    </item>
-   <item row="10" column="0" colspan="2">
+   <item row="12" column="0" colspan="2">
     <layout class="QHBoxLayout" name="horizontalLayout_6">
      <item>
       <spacer name="horizontalSpacer">
@@ -238,7 +220,7 @@
      </item>
     </layout>
    </item>
-   <item row="6" column="0" colspan="2">
+   <item row="8" column="0" colspan="2">
     <widget class="QProgressBar" name="progressBar">
      <property name="value">
       <number>24</number>
