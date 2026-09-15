@@ -5,6 +5,8 @@
 #include <QFileInfo>
 #include <QTimer>
 
+#include <cmath>
+#include <limits>
 #include <regex>
 
 #include <IBK_physics.h>
@@ -47,6 +49,9 @@ ImportDXFDialog::ImportDXFDialog(QWidget *parent) :
 									   tr("Custom center x coordinate"));
 	m_ui->lineEditCustomCenterY->setup(std::numeric_limits<double>::lowest(), std::numeric_limits<double>::max(),
 									   tr("Custom center y coordinate"));
+
+	m_ui->checkBoxGeoreference->setChecked(false);
+	updateGeoreferenceControls();
 }
 
 ImportDXFDialog::~ImportDXFDialog() {
@@ -70,11 +75,14 @@ ImportDXFDialog::ImportResults ImportDXFDialog::importFile(const QString &fname)
 	QFileInfo finfo(fname);
 	m_ui->lineEditDrawingName->setText(finfo.fileName());
 
+	detectGeoreferencing();
+
 	int res = exec();
 	if (res == QDialog::Rejected)
 		return ImportCancelled;
 
-	if (m_ui->checkBoxMove->isChecked()) {
+	// a georeferenced drawing is placed absolutely, the centering options must not touch it
+	if (!m_georeferenced && m_ui->checkBoxMove->isChecked()) {
 		// set custom origin ?
 		if (m_ui->checkBoxCustomOrigin->isChecked())
 			m_drawing.m_offset = IBKMK::Vector3D(m_ui->lineEditCustomCenterX->value(),
@@ -175,8 +183,8 @@ void ImportDXFDialog::on_pushButtonConvert_clicked() {
 		// compensate coordinates
 		// m_drawing.compensateCoordinates();
 
-		// calculate center
-		if (m_drawing.m_offset == IBKMK::Vector3D()) {
+		// calculate center - a georeferenced drawing gets its offset from the coordinate reference system
+		if (!m_ui->checkBoxGeoreference->isChecked() && m_drawing.m_offset == IBKMK::Vector3D()) {
 			IBKMK::Vector3D center = m_drawing.weightedCenterMedian(m_nextId);
 			m_drawing.m_offset = -1.0 * center;
 		}
@@ -273,7 +281,13 @@ void ImportDXFDialog::on_pushButtonConvert_clicked() {
 		log += QString("---------------------------------------------------------\n");
 		log += QString("\nPLEASE MIND: Currently are no hatchings supported.\n");
 
-		m_drawing.m_offset *= m_drawing.m_scalingFactor;
+		m_georeferenced = false;
+		if (m_ui->checkBoxGeoreference->isChecked())
+			m_georeferenced = applyGeoreferencing(log);
+
+		// the georeferenced offset is already absolute, only the centering offset is in drawing units
+		if (!m_georeferenced)
+			m_drawing.m_offset *= m_drawing.m_scalingFactor;
 
 	} catch (IBK::Exception &ex) {
 
@@ -344,6 +358,196 @@ void ImportDXFDialog::on_checkBoxCustomOrigin_stateChanged(int arg1) {
 	m_ui->lineEditCustomCenterX->setEnabled(arg1);
 	m_ui->lineEditCustomCenterY->setEnabled(arg1);
 }
+
+void ImportDXFDialog::setProjectWorldOrigin(const IBKMK::Vector3D & origin, int utmZone, bool north) {
+	m_worldOrigin = origin;
+	m_worldUtmZone = utmZone;
+	m_worldNorth = north;
+	m_haveProjectOrigin = true;
+}
+
+
+void ImportDXFDialog::on_checkBoxGeoreference_toggled(bool /*checked*/) {
+	updateGeoreferenceControls();
+}
+
+
+void ImportDXFDialog::updateGeoreferenceControls() {
+	bool georeference = m_ui->checkBoxGeoreference->isChecked();
+
+	m_ui->labelCRS->setEnabled(georeference);
+	m_ui->lineEditCRS->setEnabled(georeference);
+
+	// georeferencing dictates the placement, the centering options would fight it
+	m_ui->checkBoxMove->setEnabled(!georeference);
+	m_ui->checkBoxCustomOrigin->setEnabled(!georeference && m_ui->checkBoxMove->isChecked());
+	bool customOrigin = !georeference && m_ui->checkBoxCustomOrigin->isChecked();
+	m_ui->labelX->setEnabled(customOrigin);
+	m_ui->labelY->setEnabled(customOrigin);
+	m_ui->lineEditCustomCenterX->setEnabled(customOrigin);
+	m_ui->lineEditCustomCenterY->setEnabled(customOrigin);
+
+	QString tooltip;
+	if (georeference)
+		tooltip = tr("Disabled, the drawing is placed through its coordinate reference system.");
+	m_ui->checkBoxMove->setToolTip(tooltip);
+	m_ui->checkBoxCustomOrigin->setToolTip(tooltip);
+}
+
+
+void ImportDXFDialog::setGeoreferenceInfo(const QString & text, bool warning) {
+	m_ui->labelGeoreferenceInfo->setText(text);
+	m_ui->labelGeoreferenceInfo->setStyleSheet(warning ? "color: #c04000;" : QString());
+}
+
+
+void ImportDXFDialog::detectGeoreferencing() {
+	m_coordinateSystem = Georeferencing::CoordinateSystem();
+	m_designTransform = Georeferencing::DesignTransform();
+	m_georeferenced = false;
+
+	m_coordinateSystem = Georeferencing::detectCoordinateSystem(m_filePath, m_designTransform);
+
+	QString projectInfo;
+	if (m_haveProjectOrigin)
+		projectInfo = tr(" The drawing is placed relative to the world coordinate origin of the project in %1.")
+					  .arg(Georeferencing::utmName(m_worldUtmZone, m_worldNorth));
+
+	if (!m_coordinateSystem.isValid()) {
+		m_ui->checkBoxGeoreference->setChecked(false);
+		m_ui->lineEditCRS->clear();
+		setGeoreferenceInfo(tr("No coordinate reference system found in the DXF file. Enter it manually, "
+							   "for example 'EPSG:25833', to place the drawing at its real world position."), false);
+	}
+	else {
+		m_ui->checkBoxGeoreference->setChecked(true);
+		m_ui->lineEditCRS->setText(m_coordinateSystem.m_name);
+		if (m_designTransform.m_fromGeoData)
+			setGeoreferenceInfo(tr("Coordinate reference system %1 read from the %2, including the placement "
+								   "of the drawing.%3")
+								.arg(m_coordinateSystem.m_name).arg(m_coordinateSystem.m_source).arg(projectInfo), false);
+		else
+			setGeoreferenceInfo(tr("Coordinate reference system %1 read from the %2.%3")
+								.arg(m_coordinateSystem.m_name).arg(m_coordinateSystem.m_source).arg(projectInfo), false);
+	}
+
+	updateGeoreferenceControls();
+}
+
+
+IBKMK::Vector2D ImportDXFDialog::referencePoint(const Drawing & drawing) {
+	double minX =  std::numeric_limits<double>::max();
+	double minY =  std::numeric_limits<double>::max();
+	double maxX = -std::numeric_limits<double>::max();
+	double maxY = -std::numeric_limits<double>::max();
+
+	auto addPoint = [&](const IBKMK::Vector2D & p) {
+		minX = std::min(minX, p.m_x);
+		minY = std::min(minY, p.m_y);
+		maxX = std::max(maxX, p.m_x);
+		maxY = std::max(maxY, p.m_y);
+	};
+
+	// objects that belong to a block are stored in block local coordinates and must be skipped
+	for (const Drawing::Point & o : drawing.m_points)
+		if (o.m_block == nullptr) addPoint(o.m_point);
+	for (const Drawing::Line & o : drawing.m_lines)
+		if (o.m_block == nullptr) { addPoint(o.m_point1); addPoint(o.m_point2); }
+	for (const Drawing::PolyLine & o : drawing.m_polylines)
+		if (o.m_block == nullptr) for (const IBKMK::Vector2D & p : o.m_polyline) addPoint(p);
+	for (const Drawing::Circle & o : drawing.m_circles)
+		if (o.m_block == nullptr) addPoint(o.m_center);
+	for (const Drawing::Arc & o : drawing.m_arcs)
+		if (o.m_block == nullptr) addPoint(o.m_center);
+	for (const Drawing::Ellipse & o : drawing.m_ellipses)
+		if (o.m_block == nullptr) addPoint(o.m_center);
+	for (const Drawing::Solid & o : drawing.m_solids)
+		if (o.m_block == nullptr) { addPoint(o.m_point1); addPoint(o.m_point2);
+									addPoint(o.m_point3); addPoint(o.m_point4); }
+	for (const Drawing::Text & o : drawing.m_texts)
+		if (o.m_block == nullptr) addPoint(o.m_basePoint);
+	for (const Drawing::Insert & o : drawing.m_inserts)
+		addPoint(o.m_insertionPoint);
+
+	if (minX > maxX)
+		return IBKMK::Vector2D(0,0); // drawing without geometry
+
+	return IBKMK::Vector2D(0.5*(minX + maxX), 0.5*(minY + maxY));
+}
+
+
+bool ImportDXFDialog::applyGeoreferencing(QString & log) {
+	QString crsText = m_ui->lineEditCRS->text().trimmed();
+
+	// what the user typed wins over what was detected
+	Georeferencing::CoordinateSystem crs = m_coordinateSystem;
+	if (crsText != m_coordinateSystem.m_name)
+		crs = Georeferencing::fromUserInput(crsText);
+
+	if (!crs.isValid()) {
+		setGeoreferenceInfo(tr("Unknown coordinate reference system '%1', the drawing is imported without "
+							   "georeferencing.").arg(crsText), true);
+		log += QString("Georeferencing skipped: unknown coordinate reference system '%1'.\n").arg(crsText);
+		return false;
+	}
+
+	// without an AcDbGeoData object the drawing coordinates are CRS coordinates already and only the
+	// drawing unit has to be converted to meters
+	Georeferencing::DesignTransform design = m_designTransform;
+	if (!design.m_fromGeoData)
+		design.m_scale = m_drawing.m_scalingFactor;
+
+	IBKMK::Vector2D refPoint = referencePoint(m_drawing);
+
+	int utmZone = m_worldUtmZone;
+	bool north = m_worldNorth;
+	if (!m_haveProjectOrigin) {
+		utmZone = Georeferencing::utmZoneForPoint(crs, Georeferencing::drawingToCRS(design, refPoint), north);
+		if (utmZone < 1) {
+			setGeoreferenceInfo(tr("Cannot determine the UTM zone of the drawing, the drawing is imported "
+								   "without georeferencing."), true);
+			log += "Georeferencing skipped: cannot determine the UTM zone of the drawing.\n";
+			return false;
+		}
+	}
+
+	Georeferencing::Placement placement;
+	QString errmsg;
+	if (!Georeferencing::computePlacement(crs, design, utmZone, north, refPoint, placement, errmsg)) {
+		setGeoreferenceInfo(errmsg, true);
+		log += QString("Georeferencing skipped: %1\n").arg(errmsg);
+		return false;
+	}
+
+	if (!m_haveProjectOrigin) {
+		// the world coordinate origin keeps the local coordinates small, put it at the drawing center
+		m_worldOrigin = IBKMK::Vector3D(std::floor(placement.m_referenceUtm.m_x),
+										std::floor(placement.m_referenceUtm.m_y), 0);
+		m_worldUtmZone = utmZone;
+		m_worldNorth = north;
+	}
+
+	double rotationInDeg = placement.m_rotation/IBK::DEG2RAD;
+
+	m_drawing.m_scalingFactor = placement.m_scale;
+	m_drawing.m_rotationMatrix = RotationMatrix(QQuaternion::fromAxisAndAngle(0, 0, 1, (float)rotationInDeg));
+	m_drawing.m_offset = IBKMK::Vector3D(placement.m_translation.m_x - m_worldOrigin.m_x,
+										 placement.m_translation.m_y - m_worldOrigin.m_y, 0);
+
+	setGeoreferenceInfo(tr("Drawing placed in %1 from %2. Rotation %L3 \u00b0, scaling factor %L4.")
+						.arg(Georeferencing::utmName(m_worldUtmZone, m_worldNorth))
+						.arg(crs.m_name).arg(rotationInDeg, 0, 'f', 4).arg(placement.m_scale), false);
+
+	log += QString("Georeferenced from %1 to %2.\n").arg(crs.m_name)
+		   .arg(Georeferencing::utmName(m_worldUtmZone, m_worldNorth));
+	log += QString("World coordinate origin - X: %1 Y: %2\n").arg(m_worldOrigin.m_x, 0, 'f', 3)
+		   .arg(m_worldOrigin.m_y, 0, 'f', 3);
+	log += QString("Rotation: %1 deg, scaling factor: %2\n").arg(rotationInDeg, 0, 'f', 4).arg(placement.m_scale);
+	log += QString("---------------------------------------------------------\n");
+
+	return true;
+}
+
 
 void ImportDXFDialog::updateImportButtonEnabledState() {
 	bool valid = true;

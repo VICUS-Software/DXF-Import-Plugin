@@ -2,6 +2,19 @@
 
 project(DXFImportPlugin)
 
+# GDAL support (coordinate reference systems for georeferencing)
+if(WIN32)
+	# Windows: use precompiled binaries, run build/cmake/download_gdal.bat to fetch them
+	include_directories(${PROJECT_SOURCE_DIR}/../gdal/include)
+	link_directories(${PROJECT_SOURCE_DIR}/../gdal/lib)
+	set(GDAL_LIBRARY gdal_i)
+else()
+	# Linux/macOS: find system GDAL (install with: sudo apt install libgdal-dev)
+	find_package(GDAL REQUIRED)
+	include_directories(${GDAL_INCLUDE_DIRS})
+	set(GDAL_LIBRARY ${GDAL_LIBRARIES})
+endif()
+
 # Add include directories
 include_directories(	
 	${PROJECT_SOURCE_DIR}/src			# Needed so that ui-generated header files find our own headers
@@ -68,6 +81,7 @@ list(APPEND LIBRARIES_TO_LINK
 		QtExt
 		glm
 		${QT_LIBRARIES}
+		${GDAL_LIBRARY}
 )
 
 # Specify the static libraries to link with

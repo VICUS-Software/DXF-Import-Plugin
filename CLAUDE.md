@@ -40,6 +40,10 @@ make -j$(nproc)
 The host app (SIM-VICUS) loads this plugin at runtime, calls `setLanguage()` for i18n, registers the menu via `importMenuCaption()`, and triggers `import()` when the user selects DXF import.
 
 ### Data Flow
+0. **Project context**: SIM-VICUS hands the world coordinate origin of the open project into
+   `import()` via `projectText` (the plugin declares `"accepts-project-context"` in `metadata.json`).
+   If the project has no origin, yet, a georeferenced drawing proposes one and writes it back as
+   `<WorldCoordinateOrigin>`.
 1. **DXF Parsing**: `DRW_InterfaceImpl` (nested in `ImportDXFDialog`) implements libdxfrw's callback interface to receive DXF entities
 2. **Data Model**: Entities are stored in `Drawing` — the central class managing all geometry (points, lines, polylines, circles, ellipses, arcs, solids, text, dimensions), blocks/inserts, layers, and transformation matrices
 3. **Interactive Dialog**: `ImportDXFDialog` provides UI for scale detection, unit selection, origin positioning, and layer management
@@ -53,6 +57,8 @@ The host app (SIM-VICUS) loads this plugin at runtime, calls `setLanguage()` for
 - **`Constants.h/cpp`** — Segment counts for arcs/circles (30), line weight defaults
 - **`Utilities.h/cpp`** — Unique name generation, XML template helpers
 - **`RotationMatrix.h`** — 3D rotation via QQuaternion + GLM
+- **`Georeferencing.h/cpp`** — reads the coordinate reference system of a DXF (`.prj` sidecar or
+  `AcDbGeoData` object) and computes the placement of the drawing in the UTM system of the project
 
 ### Vendored Dependencies (`externals/`)
 | Library | Purpose |
@@ -64,6 +70,13 @@ The host app (SIM-VICUS) loads this plugin at runtime, calls `setLanguage()` for
 | **TiCPP** | TinyXML C++ wrapper for VICUS XML I/O |
 | **glm** | OpenGL Mathematics (matrix transforms) |
 | **clipper** | Polygon clipping |
+
+### External Dependencies
+
+| Library | Purpose | How it is found |
+|---------|---------|-----------------|
+| **Qt 6.9.3** | GUI. The plugin is loaded into the SIM-VICUS process, so it must be built against the *same* Qt. `build.sh` picks up the aqt install in `~/Qt/6.9.3/gcc_64` (override with `AQT_QT_PREFIX` / `AQT_QT_VERSION`). |
+| **GDAL** | Coordinate reference systems for georeferencing (OSR part only) | Linux/macOS: `find_package(GDAL)` / `PKGCONFIG += gdal`, install `libgdal-dev`. Windows: headers are vendored in `externals/gdal/include`, run `build/cmake/download_gdal.bat` for `gdal_i.lib`. |
 
 Build dependency order: IBK, IBKMK, TiCPP, glm, libdxfrw, QtExt → DXFImportPlugin
 

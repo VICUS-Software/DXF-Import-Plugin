@@ -1,6 +1,7 @@
 #include "DXFImportPlugin.h"
 
 #include "ImportDXFDialog.h"
+#include "Georeferencing.h"
 
 #include <QFileDialog>
 #include <QDir>
@@ -12,9 +13,62 @@
 #include <QtExt_LanguageHandler.h>
 
 #include <IBK_MessageHandlerRegistry.h>
+#include <IBK_StringUtils.h>
 
 
 const std::string VERSION = "1.1";
+
+namespace {
+
+/*! Reads the world coordinate origin from the project context that SIM-VICUS hands in through
+	'projectText'. Returns false if there is no context or it holds no origin, the drawing then
+	defines the origin itself.
+*/
+bool readProjectWorldOrigin(const QString & projectText, IBKMK::Vector3D & origin, int & utmZone, bool & north) {
+	if (projectText.trimmed().isEmpty())
+		return false;
+
+	TiXmlDocument doc;
+	doc.Parse(projectText.toUtf8().constData(), nullptr, TIXML_ENCODING_UTF8);
+	if (doc.Error())
+		return false;
+
+	const TiXmlElement * root = doc.FirstChildElement("VicusProject");
+	if (root == nullptr)
+		return false;
+	const TiXmlElement * project = root->FirstChildElement("Project");
+	if (project == nullptr)
+		return false;
+	const TiXmlElement * wco = project->FirstChildElement("WorldCoordinateOrigin");
+	if (wco == nullptr)
+		return false;
+
+	const TiXmlElement * originElement = wco->FirstChildElement("Origin");
+	if (originElement == nullptr || originElement->GetText() == nullptr)
+		return false;
+
+	try {
+		origin = IBKMK::Vector3D::fromString(originElement->GetText());
+	}
+	catch (...) {
+		return false;
+	}
+
+	// a project without a world coordinate origin sits at (0,0)
+	if (origin.m_x == 0 && origin.m_y == 0)
+		return false;
+
+	const char * zone = wco->Attribute("utmZone");
+	if (zone != nullptr)
+		utmZone = IBK::string2val<int>(std::string(zone));
+	const char * northAttrib = wco->Attribute("north");
+	north = (northAttrib == nullptr) || (std::string(northAttrib) != "0" && std::string(northAttrib) != "false");
+
+	return (utmZone >= 1 && utmZone <= 60);
+}
+
+} // namespace
+
 
 DXFImportPlugin::DXFImportPlugin(QObject *parent) :
 	QObject(parent)
@@ -85,6 +139,15 @@ bool DXFImportPlugin::import(QWidget * parent, QString& projectText) {
 
 	// open dialog
 	ImportDXFDialog diag(parent);
+
+	// SIM-VICUS hands in the world coordinate origin of the open project, if it has one. All other
+	// objects refer to it, so it must not be moved - the drawing is placed relative to it.
+	IBKMK::Vector3D	projectOrigin;
+	int				projectUtmZone = 32;
+	bool			projectNorth = true;
+	if (readProjectWorldOrigin(projectText, projectOrigin, projectUtmZone, projectNorth))
+		diag.setProjectWorldOrigin(projectOrigin, projectUtmZone, projectNorth);
+
 	ImportDXFDialog::ImportResults res = diag.importFile(filename);
 
 	if (res == ImportDXFDialog::AddDrawings) {
@@ -100,6 +163,17 @@ bool DXFImportPlugin::import(QWidget * parent, QString& projectText) {
 
 		TiXmlElement * e = new TiXmlElement("Project");
 		root->LinkEndChild(e);
+
+		// a georeferenced drawing defines the world coordinate origin, if the project had none, yet
+		if (diag.proposesWorldOrigin()) {
+			TiXmlElement * wco = new TiXmlElement("WorldCoordinateOrigin");
+			e->LinkEndChild(wco);
+			wco->SetAttribute("utmZone", IBK::val2string<int>(diag.worldUtmZone()));
+			if (!diag.worldNorth())
+				wco->SetAttribute("north", IBK::val2string<bool>(false));
+			TiXmlElement::appendSingleAttributeElement(wco, "Origin", nullptr, std::string(),
+													   diag.worldOrigin().toString(10));
+		}
 
 		TiXmlElement * drs = new TiXmlElement("Drawings");
 		e->LinkEndChild(drs);

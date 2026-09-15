@@ -1,0 +1,2 @@
+# GDAL import library, fetched by build/cmake/download_gdal.bat
+*.lib

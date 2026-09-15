@@ -22,7 +22,7 @@ jobs:
       with:
         submodules: 'true'
     - name: install qt6
-      run: sudo apt install qt6-base-dev qt6-svg-dev libgl1-mesa-dev
+      run: sudo apt install qt6-base-dev qt6-svg-dev libgl1-mesa-dev libgdal-dev
     - name: link submodule libraries
       working-directory: externals
       run: ./createLinuxSymlinks.sh

@@ -57,6 +57,7 @@ SOURCES += \
 	src/Constants.cpp \
 	src/DXFImportPlugin.cpp \
 	src/Drawing.cpp \
+	src/Georeferencing.cpp \
 	src/DrawingLayer.cpp \
 	src/ImportDXFDialog.cpp \
 	src/Object.cpp \
@@ -66,6 +67,7 @@ HEADERS += \
 	src/Constants.h \
 	src/Drawing.h \
 	src/DrawingLayer.h \
+	src/Georeferencing.h \
 	src/ImportDXFDialog.h \
 	src/Object.h \
 	src/RotationMatrix.h \
@@ -99,6 +101,21 @@ LIBS += \
 	-lIBK
 
 win32:LIBS += -liphlpapi -lshell32
+
+# GDAL support, needed for the coordinate reference systems of georeferenced drawings
+linux|macx {
+	CONFIG += link_pkgconfig
+	PKGCONFIG += gdal
+}
+
+win32 {
+	# precompiled binaries, run build/cmake/download_gdal.bat to fetch them
+	!exists($$PWD/../gdal/lib/gdal_i.lib) {
+		error("GDAL not found in externals/gdal/lib. Run build/cmake/download_gdal.bat!")
+	}
+	INCLUDEPATH += $$PWD/../gdal/include
+	LIBS += -L$$PWD/../gdal/lib -lgdal_i
+}
 
 win32-msvc* {
 	QMAKE_CXXFLAGS += /std:c++17

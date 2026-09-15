@@ -2409,7 +2409,7 @@ TiXmlElement * Drawing::writeXML(TiXmlElement * parent) const {
 	if (m_visible != Drawing().m_visible)
 		e->SetAttribute("visible", IBK::val2string<bool>(m_visible));
 	qDebug() << "Point: " << QString::fromStdString(m_offset.toString(16));
-	TiXmlElement::appendSingleAttributeElement(e, "Origin", nullptr, std::string(), m_offset.toString(8));
+	TiXmlElement::appendSingleAttributeElement(e, "Origin", nullptr, std::string(), m_offset.toString(16));
 	m_rotationMatrix.writeXML(e);
 	TiXmlElement::appendSingleAttributeElement(e, "ScalingFactor", nullptr, std::string(), IBK::val2string<double>(m_scalingFactor));
 	TiXmlElement::appendSingleAttributeElement(e, "LineWeightScaling", nullptr, std::string(), IBK::val2string<double>(m_lineWeightScaling));

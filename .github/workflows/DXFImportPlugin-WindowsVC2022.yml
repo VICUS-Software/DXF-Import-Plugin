@@ -39,6 +39,11 @@ jobs:
       with:
         submodules: 'true'
 
+    - name: download gdal
+      working-directory: build/cmake/
+      shell: cmd
+      run: download_gdal.bat
+
     - name: build
       working-directory: build/cmake/
       shell: cmd

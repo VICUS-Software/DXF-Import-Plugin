@@ -61,6 +61,17 @@ LIBS += \
 -lglm \
 -lDXFImportPlugin
 
+# GDAL, pulled in through the plugin's Georeferencing class
+linux|macx {
+	CONFIG += link_pkgconfig
+	PKGCONFIG += gdal
+}
+
+win32 {
+	INCLUDEPATH += ../externals/gdal/include
+	LIBS += -L../externals/gdal/lib -lgdal_i
+}
+
 INCLUDEPATH = \
 src \
 ../externals/DXFImportPlugin/src \

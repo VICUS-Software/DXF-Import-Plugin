@@ -2,6 +2,7 @@
 #define IMPORTDXFDIALOG_H
 
 #include "Drawing.h"
+#include "Georeferencing.h"
 
 #include <QDialog>
 
@@ -46,6 +47,26 @@ public:
 
 	const Drawing &drawing() const;
 
+	/*! Tells the dialog about the world coordinate origin of the project that the drawing is
+		imported into. Without this the drawing defines the origin itself (see worldOrigin()).
+	*/
+	void setProjectWorldOrigin(const IBKMK::Vector3D & origin, int utmZone, bool north);
+
+	/*! True if the drawing was placed through its coordinate reference system. */
+	bool isGeoreferenced() const { return m_georeferenced; }
+
+	/*! True if the drawing defines the world coordinate origin, i.e. it was georeferenced and the
+		project did not have an origin, yet.
+	*/
+	bool proposesWorldOrigin() const { return m_georeferenced && !m_haveProjectOrigin; }
+
+	/*! World coordinate origin in UTM coordinates in [m], only meaningful if isGeoreferenced(). */
+	const IBKMK::Vector3D & worldOrigin() const { return m_worldOrigin; }
+	/*! UTM zone of the world coordinate origin. */
+	int worldUtmZone() const { return m_worldUtmZone; }
+	/*! Hemisphere of the world coordinate origin. */
+	bool worldNorth() const { return m_worldNorth; }
+
 	static IBKMK::Vector3D boundingBox(const Drawing * drawing,
 									   IBKMK::Vector3D &center,
 									   bool transformPoints, const double scalingFactor);
@@ -71,6 +92,8 @@ private slots:
 
 	void on_checkBoxCustomOrigin_toggled(bool checked);
 
+	void on_checkBoxGeoreference_toggled(bool checked);
+
 private:
 	/*! Read a specified dxf file.
 		\param drawing VICUS Drawing, where all primitives are added
@@ -83,6 +106,27 @@ private:
 	void fixFonts();
 
 	void updateImportButtonEnabledState();
+
+	/*! Looks for a coordinate reference system of the DXF file and updates the georeferencing widgets. */
+	void detectGeoreferencing();
+
+	/*! Enables/disables the placement widgets that georeferencing takes over. */
+	void updateGeoreferenceControls();
+
+	/*! Writes a message into the georeferencing info label. */
+	void setGeoreferenceInfo(const QString & text, bool warning);
+
+	/*! Places the drawing in the UTM system of the project, sets offset, rotation and scaling factor.
+		\param log Receives log messages shown in the log window.
+		Returns false if no placement could be computed, the caller then falls back to the
+		unreferenced placement.
+	*/
+	bool applyGeoreferencing(QString & log);
+
+	/*! Returns the center of the raw drawing coordinates, used as reference point for georeferencing.
+		Objects of a block are stored in block local coordinates and are skipped.
+	*/
+	static IBKMK::Vector2D referencePoint(const Drawing & drawing);
 
 	/*! Pointer to UI. */
 	Ui::ImportDXFDialog		*m_ui;
@@ -106,6 +150,27 @@ private:
 
 	/*! Dxf Scaling factor from "$INSUNIT". */
 	std::string				m_dxfScalingUnit = "";
+
+	/*! Coordinate reference system of the DXF file, detected or entered by the user. */
+	Georeferencing::CoordinateSystem	m_coordinateSystem;
+
+	/*! Mapping from drawing coordinates to CRS coordinates, from an AcDbGeoData object. */
+	Georeferencing::DesignTransform	m_designTransform;
+
+	/*! True if the drawing was placed through its coordinate reference system. */
+	bool					m_georeferenced = false;
+
+	/*! True if the project already has a world coordinate origin, which must not be moved. */
+	bool					m_haveProjectOrigin = false;
+
+	/*! World coordinate origin in UTM coordinates in [m]. */
+	IBKMK::Vector3D			m_worldOrigin;
+
+	/*! UTM zone of the world coordinate origin. */
+	int						m_worldUtmZone = 32;
+
+	/*! Hemisphere of the world coordinate origin. */
+	bool					m_worldNorth = true;
 
 };
 

@@ -58,10 +58,28 @@ do
 
     if [[ $var = "verbose"  ]];
   	then
-		CMAKE_OPTIONS="-DCMAKE_VERBOSE_MAKEFILE:BOOL=ON"
+		CMAKE_OPTIONS="$CMAKE_OPTIONS -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON"
 	  fi
 
 done
+
+# The plugin is loaded into the SIM-VICUS process, so it must be built against the very same Qt.
+# SIM-VICUS uses the aqt install in ~/Qt/<version>/gcc_64 (see its build/cmake/install-qt-6.9.3.sh).
+# Override AQT_QT_VERSION / AQT_QT_PREFIX in the environment to point at a different install.
+AQT_QT_VERSION="${AQT_QT_VERSION:-6.9.3}"
+AQT_QT_PREFIX="${AQT_QT_PREFIX:-$HOME/Qt/${AQT_QT_VERSION}/gcc_64}"
+
+if [ -d "$AQT_QT_PREFIX" ]; then
+	echo "Using aqt Qt at $AQT_QT_PREFIX"
+	export PATH="$AQT_QT_PREFIX/bin:$PATH"
+	export CMAKE_PREFIX_PATH="$AQT_QT_PREFIX${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
+	export LD_LIBRARY_PATH="$AQT_QT_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+	export QT_PLUGIN_PATH="$AQT_QT_PREFIX/plugins"
+	# bake aqt-Qt into the RPATH so the plugin does not pull in a second, system Qt at load time
+	CMAKE_OPTIONS="$CMAKE_OPTIONS -DCMAKE_BUILD_RPATH=$AQT_QT_PREFIX/lib -DCMAKE_INSTALL_RPATH=$AQT_QT_PREFIX/lib -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON"
+else
+	echo "WARN: $AQT_QT_PREFIX not found, falling back to system Qt"
+fi
 
 # create build dir if not exists
 BUILDDIR=$BUILDDIR-$BUILD_DIR_SUFFIX

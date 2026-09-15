@@ -18,7 +18,10 @@ public:
 	/*! This is the central import function, that is executed when the user
 		selects the respective menu action.
 		\param parent Parent widget pointer, to be used as parent for modal dialogs.
-		\param projectText The VICUS project data as xml text to be populated.
+		\param projectText On call this is either empty or, for plugins that declare
+			"accepts-project-context" in their metadata, a minimal VICUS project document holding the
+			context the plugin may need - currently only <WorldCoordinateOrigin>. The plugin
+			*replaces* the content with the VICUS project data it produces.
 
 		\return Returns true if the import was succcessful and SIM-VICUS shall use the populated VICUS-project
 			data (either as new project or merged into/added to the existing project). If false is returned,
