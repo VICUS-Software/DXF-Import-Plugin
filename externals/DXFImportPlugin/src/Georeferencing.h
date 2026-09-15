@@ -68,9 +68,11 @@ public:
 		IBKMK::Vector2D	m_translation;
 		/*! UTM coordinate of the reference point the transformation was linearized around, in [m]. */
 		IBKMK::Vector2D	m_referenceUtm;
-		/*! Grid scale ratio between source CRS and UTM [-], 1 if both are the same CRS. */
+		/*! Grid scale ratio between source CRS and UTM [-], 1 if both are the same CRS.
+			Diagnostic value, already contained in m_scale. */
 		double			m_gridScale = 1;
-		/*! Meridian convergence between source CRS and UTM in [rad], 0 if both are the same CRS. */
+		/*! Meridian convergence between source CRS and UTM in [rad], 0 if both are the same CRS.
+			Diagnostic value, already contained in m_rotation. */
 		double			m_convergence = 0;
 	};
 

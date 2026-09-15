@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <memory>
+#include <string>
 
 #include <QDir>
 #include <QFile>
@@ -9,23 +10,104 @@
 #include <QRegularExpression>
 #include <QTextStream>
 
+#include <IBK_messages.h>
 #include <IBK_physics.h>
 
 #include <ogr_spatialref.h>
+#include <ogr_srs_api.h>
 #include <cpl_conv.h>
 #include <cpl_error.h>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 namespace {
 
 /*! Distance of the sample points used to linearize a CRS transformation in [m]. */
 const double SAMPLE_DISTANCE = 100;
 
-/*! Suppresses GDAL error output while probing user input or file content. */
+/*! Suppresses GDAL error output while probing user input or file content.
+	The errors are still recorded, CPLGetLastErrorMsg() reports them for the log.
+*/
 class QuietGDALErrors {
 public:
 	QuietGDALErrors()	{ CPLPushErrorHandler(CPLQuietErrorHandler); }
 	~QuietGDALErrors()	{ CPLPopErrorHandler(); }
 };
+
+
+/*! Directory the plugin binary itself lives in, empty where it cannot be determined.
+	Not the application directory - the plugin is loaded into SIM-VICUS and the GDAL files that ship
+	with it sit next to the plugin, not next to the host executable.
+*/
+QString moduleDirectory() {
+#ifdef Q_OS_WIN
+	HMODULE module = nullptr;
+	if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+						   reinterpret_cast<LPCWSTR>(&moduleDirectory), &module) == 0 || module == nullptr)
+		return QString();
+	wchar_t path[MAX_PATH] = {0};
+	DWORD len = GetModuleFileNameW(module, path, MAX_PATH);
+	if (len == 0 || len >= MAX_PATH)
+		return QString();
+	return QFileInfo(QString::fromWCharArray(path, (int)len)).absolutePath();
+#else
+	// on Linux and macOS GDAL comes from the system package and brings its own data
+	return QString();
+#endif
+}
+
+
+/*! Makes sure PROJ can find its proj.db - without it every EPSG lookup fails and georeferencing is
+	silently dead. Runs once, and only takes over when PROJ cannot help itself.
+*/
+void ensureProjData() {
+	static bool done = false;
+	if (done)
+		return;
+	done = true;
+
+	QString gdalError;
+	{
+		QuietGDALErrors quiet;
+		CPLErrorReset();
+		OGRSpatialReference probe;
+		if (probe.importFromEPSG(4326) == OGRERR_NONE)
+			return; // PROJ found its database
+		gdalError = QString::fromUtf8(CPLGetLastErrorMsg());
+	}
+
+	QString dir = moduleDirectory();
+	QStringList candidates;
+	if (!dir.isEmpty())
+		candidates << dir + "/proj" << dir + "/share/proj" << dir;
+
+	for (const QString & c : candidates) {
+		if (!QFile::exists(c + "/proj.db"))
+			continue;
+		// The host could use GDAL as well, but if we got here its PROJ is broken too - pointing the
+		// process at a working database can only help.
+		QByteArray nativePath = QDir::toNativeSeparators(c).toUtf8();
+		const char * paths[2] = { nativePath.constData(), nullptr };
+		OSRSetPROJSearchPaths(paths);
+
+		QString gdalData = QFileInfo(c).absolutePath() + "/gdal-data";
+		if (QFile::exists(gdalData))
+			CPLSetConfigOption("GDAL_DATA", QDir::toNativeSeparators(gdalData).toUtf8().constData());
+
+		IBK::IBK_Message(IBK::FormatString("Using PROJ database in '%1'.").arg(c.toStdString()),
+						 IBK::MSG_PROGRESS, "[Georeferencing::ensureProjData]", IBK::VL_INFO);
+		return;
+	}
+
+	IBK::IBK_Message(IBK::FormatString("PROJ cannot find its database 'proj.db', coordinate reference "
+									   "systems will not resolve (%1). Expected it next to the plugin "
+									   "binary in '%2'.")
+					 .arg(gdalError.toStdString()).arg(dir.isEmpty() ? std::string("<unknown>") : dir.toStdString()),
+					 IBK::MSG_ERROR, "[Georeferencing::ensureProjData]", IBK::VL_STANDARD);
+}
+
 
 /*! Fills name and WKT of 'crs' from the given spatial reference. */
 void storeSpatialReference(OGRSpatialReference & srs, Georeferencing::CoordinateSystem & crs) {
@@ -61,7 +143,9 @@ Georeferencing::CoordinateSystem parseDefinition(const QString & text) {
 	if (definition.isEmpty())
 		return crs;
 
+	ensureProjData();
 	QuietGDALErrors quiet;
+	CPLErrorReset();
 
 	OGRSpatialReference srs;
 	if (srs.SetFromUserInput(definition.toUtf8().constData()) == OGRERR_NONE) {
@@ -72,12 +156,39 @@ Georeferencing::CoordinateSystem parseDefinition(const QString & text) {
 
 	// CAD programs write coordinate system codes of their own (for example "ETRS89.UTM-33N"), which
 	// GDAL cannot resolve. Most of them still carry the EPSG code somewhere in the definition.
+	// A WKT-shaped definition names several codes, and the first one is usually the datum or the
+	// geographic base system - taking that would read the drawing coordinates as degrees. So walk all
+	// of them and keep the last projected system; a geographic one only if nothing else resolves.
 	static const QRegularExpression epsgRe("EPSG[\"'\\s:,_]*(\\d{4,6})", QRegularExpression::CaseInsensitiveOption);
-	QRegularExpressionMatch match = epsgRe.match(definition);
-	if (match.hasMatch()) {
+	Georeferencing::CoordinateSystem geographicFallback;
+	QRegularExpressionMatchIterator it = epsgRe.globalMatch(definition);
+	while (it.hasNext()) {
 		OGRSpatialReference epsgSrs;
-		if (epsgSrs.importFromEPSG(match.captured(1).toInt()) == OGRERR_NONE)
-			storeSpatialReference(epsgSrs, crs);
+		if (epsgSrs.importFromEPSG(it.next().captured(1).toInt()) != OGRERR_NONE)
+			continue;
+
+		Georeferencing::CoordinateSystem candidate;
+		storeSpatialReference(epsgSrs, candidate);
+		if (!candidate.isValid())
+			continue;
+
+		if (epsgSrs.IsProjected())
+			crs = candidate;
+		else if (!geographicFallback.isValid())
+			geographicFallback = candidate;
+	}
+
+	if (!crs.isValid())
+		crs = geographicFallback;
+
+	// a definition that resolves nowhere is worth a log line - it is usually a missing proj.db
+	if (!crs.isValid()) {
+		// GDAL does not report a message for every rejection, only append one when there is one
+		std::string gdalError = CPLGetLastErrorMsg();
+		IBK::IBK_Message(IBK::FormatString("Cannot interpret coordinate reference system '%1'.%2")
+						 .arg(definition.left(200).toStdString())
+						 .arg(gdalError.empty() ? std::string() : " " + gdalError),
+						 IBK::MSG_WARNING, "[Georeferencing::parseDefinition]", IBK::VL_STANDARD);
 	}
 
 	return crs;
@@ -132,6 +243,8 @@ Georeferencing::CoordinateSystem Georeferencing::readDxfGeoData(const QString & 
 
 	QTextStream in(&dxfFile);
 
+	bool			inObjects = false;
+	bool			expectSectionName = false;
 	bool			inGeoData = false;
 	bool			haveDesignData = false;
 	QString			definition;
@@ -146,6 +259,31 @@ Georeferencing::CoordinateSystem Georeferencing::readDxfGeoData(const QString & 
 			break;
 		QString value = in.readLine().trimmed();
 		if (!codeOk)
+			continue;
+
+		// AcDbGeoData lives in the OBJECTS section - skipping everything before it and stopping at its
+		// end keeps a drawing without georeference data from being read end to end for nothing
+		if (code == 0) {
+			if (value.compare("SECTION", Qt::CaseInsensitive) == 0) {
+				expectSectionName = true;
+				continue;
+			}
+			if (value.compare("ENDSEC", Qt::CaseInsensitive) == 0) {
+				if (inObjects)
+					break;
+				inObjects = false;
+				continue;
+			}
+		}
+		// the name of a section is the group code 2 right after its start marker
+		if (expectSectionName) {
+			expectSectionName = false;
+			if (code == 2) {
+				inObjects = (value.compare("OBJECTS", Qt::CaseInsensitive) == 0);
+				continue;
+			}
+		}
+		if (!inObjects)
 			continue;
 
 		if (code == 0) {
@@ -246,6 +384,7 @@ Georeferencing::CoordinateSystem Georeferencing::utmSystem(int utmZone, bool nor
 	if (utmZone < 1 || utmZone > 60)
 		return crs;
 
+	ensureProjData();
 	QuietGDALErrors quiet;
 
 	OGRSpatialReference srs;
@@ -324,6 +463,7 @@ bool Georeferencing::computePlacement(const CoordinateSystem & source, const Des
 		return false;
 	}
 
+	ensureProjData();
 	QuietGDALErrors quiet;
 
 	OGRSpatialReference sourceSrs;

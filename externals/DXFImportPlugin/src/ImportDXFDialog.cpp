@@ -807,6 +807,11 @@ bool ImportDXFDialog::applyGeoreferencing(QString & log) {
 	log += QString("World coordinate origin - X: %1 Y: %2\n").arg(m_worldOrigin.m_x, 0, 'f', 3)
 		   .arg(m_worldOrigin.m_y, 0, 'f', 3);
 	log += QString("Rotation: %1 deg, scaling factor: %2\n").arg(rotationInDeg, 0, 'f', 4).arg(placement.m_scale);
+	// diagnostics of the linearization - a grid scale far from 1 or a large convergence means the
+	// drawing is far from the central meridian of the target zone
+	log += QString("Grid scale: %1, meridian convergence: %2 deg\n")
+		   .arg(placement.m_gridScale, 0, 'f', 8)
+		   .arg(placement.m_convergence/IBK::DEG2RAD, 0, 'f', 4);
 	log += QString("---------------------------------------------------------\n");
 
 	// remember it, the next drawing is usually from the same region
