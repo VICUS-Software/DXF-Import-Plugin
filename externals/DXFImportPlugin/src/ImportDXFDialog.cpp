@@ -1,11 +1,14 @@
 #include "ImportDXFDialog.h"
 #include "ui_ImportDXFDialog.h"
 
+#include <QApplication>
+#include <QLayout>
 #include <QMessageBox>
 #include <QFileInfo>
 #include <QTimer>
 #include <QSettings>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <regex>
@@ -14,6 +17,8 @@
 #include <IBK_messages.h>
 
 #include <IBKMK_3DCalculations.h>
+
+#include <QtExt_SmartLabel.h>
 
 
 ImportDXFDialog::ImportDXFDialog(QWidget *parent) :
@@ -52,6 +57,12 @@ ImportDXFDialog::ImportDXFDialog(QWidget *parent) :
 									   tr("Custom center y coordinate"));
 
 	m_ui->checkBoxGeoreference->setChecked(false);
+	// The plugin links its own copy of QtExt, so the settings SIM-VICUS applies to its SmartLabels do
+	// not reach ours - read them from the host's configuration instead of overriding the user's choice.
+	QSettings hostSettings("VICUS-SOFTWARE", "VICUS");
+	QtExt::SmartLabel::setSmartLabelsVisible(hostSettings.value("ShowInfoLabels", true).toBool());
+	QtExt::SmartLabel::setDarkMode(qApp->palette().color(QPalette::Window).lightness() < 128);
+	setGeoreferenceInfo(QString(), false);
 	updateGeoreferenceControls();
 }
 
@@ -426,8 +437,33 @@ void ImportDXFDialog::updateGeoreferenceControls() {
 
 
 void ImportDXFDialog::setGeoreferenceInfo(const QString & text, bool warning) {
+	m_ui->labelGeoreferenceInfo->setMode(warning ? QtExt::SmartLabel::SM_Warning : QtExt::SmartLabel::SM_Info);
 	m_ui->labelGeoreferenceInfo->setText(text);
-	m_ui->labelGeoreferenceInfo->setStyleSheet(warning ? "color: #c04000;" : QString());
+	m_ui->labelGeoreferenceInfo->setVisible(!text.isEmpty());
+	updateDialogHeight();
+}
+
+
+void ImportDXFDialog::showEvent(QShowEvent * event) {
+	QDialog::showEvent(event);
+	// Before the dialog is up, the top level layout does not report a width-dependent height yet, so
+	// the info text set during file detection would be cut off. Measure again now.
+	updateDialogHeight();
+}
+
+
+void ImportDXFDialog::updateDialogHeight() {
+	QLayout * l = layout();
+	if (l == nullptr)
+		return;
+	l->activate();
+
+	// The info label wraps its text, so its height depends on the width. sizeHint() does not know the
+	// width, only the layout does - asking it is what keeps a long message from being cut off.
+	int w = width(); // keep the current width, only the height changed
+	int h = l->hasHeightForWidth() ? l->heightForWidth(w) : sizeHint().height();
+	h = std::max(h, minimumSizeHint().height());
+	setFixedSize(w, h);
 }
 
 
@@ -1657,10 +1693,7 @@ void ImportDXFDialog::on_checkBoxShowDetails_stateChanged(int arg1) {
 	m_ui->plainTextEditLogWindow->setVisible(m_detailedMode);
 	m_ui->pushButtonImport->setEnabled(!m_detailedMode);
 
-	// adjust size
-	QSize preferredSize = sizeHint();
-	preferredSize.setWidth(width()); // Maintain the current width
-	setFixedSize(preferredSize);
+	updateDialogHeight();
 }
 
 

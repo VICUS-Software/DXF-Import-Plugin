@@ -76,5 +76,9 @@
         <file>gfx/master/editscene_green.png</file>
         <file>gfx/tool-box/arrow-down.svg</file>
         <file>gfx/tool-box/arrow-right.svg</file>
+        <file>gfx/smartlabel_info.svg</file>
+        <file>gfx/smartlabel_warning.svg</file>
+        <file>gfx/smartlabel_critical.svg</file>
+        <file>gfx/smartlabel_success.svg</file>
     </qresource>
 </RCC>

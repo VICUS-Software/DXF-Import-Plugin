@@ -104,6 +104,7 @@ HEADERS += \
 	../../src/QtExt_ReportUtilities.h \
 	../../src/QtExt_RichTextEditWidget.h \
 	../../src/QtExt_Settings.h \
+	../../src/QtExt_SmartLabel.h \
 	../../src/QtExt_Sleeper.h \
 	../../src/QtExt_SplitWidget.h \
 	../../src/QtExt_Splitter.h \
@@ -187,6 +188,7 @@ SOURCES += \
 	../../src/QtExt_ReportUtilities.cpp \
 	../../src/QtExt_RichTextEditWidget.cpp \
 	../../src/QtExt_Settings.cpp \
+	../../src/QtExt_SmartLabel.cpp \
 	../../src/QtExt_SplitWidget.cpp \
 	../../src/QtExt_Splitter.cpp \
 	../../src/QtExt_StackedWidgetResizable.cpp \

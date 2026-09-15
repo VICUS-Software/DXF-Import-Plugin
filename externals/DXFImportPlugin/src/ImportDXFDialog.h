@@ -74,6 +74,10 @@ public:
 									   IBKMK::Vector3D &center,
 									   bool transformPoints, const double scalingFactor);
 
+protected:
+	/*! Re-measures the dialog, the layout only knows its width-dependent height once it is up. */
+	void showEvent(QShowEvent * event) override;
+
 private slots:
 	void on_comboBoxUnit_activated(int index);
 
@@ -120,6 +124,11 @@ private:
 
 	/*! Writes a message into the georeferencing info label. */
 	void setGeoreferenceInfo(const QString & text, bool warning);
+
+	/*! Re-measures the dialog after its content changed height.
+		The dialog keeps a fixed size, so a longer info text would simply be cut off otherwise.
+	*/
+	void updateDialogHeight();
 
 	/*! Tries to determine the coordinate reference system from the drawing data, when the file itself
 		carries none and the user entered none.
