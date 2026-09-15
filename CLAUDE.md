@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DXFImportPlugin is a Qt-based plugin for importing DXF (AutoCAD Drawing Exchange Format) files into SIM-VICUS, a building and district energy simulation tool. It uses the Qt Plugin System (`Q_PLUGIN_METADATA` / `SVImportPluginInterface`). Current version: 1.3.0.
+DXFImportPlugin is a Qt-based plugin for importing DXF (AutoCAD Drawing Exchange Format) files into SIM-VICUS, a building and district energy simulation tool. It uses the Qt Plugin System (`Q_PLUGIN_METADATA` / `SVImportPluginInterface`). Current version: 1.4.0.
 
 ## Build Commands
 
@@ -79,8 +79,8 @@ The host app (SIM-VICUS) loads this plugin at runtime, calls `setLanguage()` for
 
 | Library | Purpose | How it is found |
 |---------|---------|-----------------|
-| **Qt 6.9.3** | GUI. The plugin is loaded into the SIM-VICUS process, so it must be built against the *same* Qt. `build.sh` picks up the aqt install in `~/Qt/6.9.3/gcc_64` (override with `AQT_QT_PREFIX` / `AQT_QT_VERSION`). |
-| **GDAL** | Coordinate reference systems for georeferencing (OSR part only) | Linux/macOS: `find_package(GDAL)` / `PKGCONFIG += gdal`, install `libgdal-dev`. Windows: headers are vendored in `externals/gdal/include`, run `build/cmake/download_gdal.bat` for `gdal_i.lib`. |
+| **Qt 6.9.3** | GUI. The plugin is loaded into the SIM-VICUS process, so it must be built against the *same* Qt. | `build.sh` picks up the aqt install in `~/Qt/6.9.3/gcc_64` (override with `AQT_QT_PREFIX` / `AQT_QT_VERSION`). |
+| **GDAL** | Coordinate reference systems for georeferencing (OSR part only) | Linux/macOS: `find_package(GDAL)` / `PKGCONFIG += gdal`, install `libgdal-dev`. Windows: headers are vendored in `externals/gdal/include`, run `build/cmake/download_gdal.bat` for `gdal_i.lib` and the DLLs. **Known gap:** that archive carries no `proj.db`, so PROJ resolves no EPSG code on Windows until it is added — `Georeferencing::ensureProjData()` picks up a `proj/` directory next to the plugin binary once it ships. |
 
 Build dependency order: IBK, IBKMK, TiCPP, glm, libdxfrw, QtExt → DXFImportPlugin
 

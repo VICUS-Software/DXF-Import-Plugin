@@ -44,6 +44,28 @@ echo Copying GDAL DLLs to bin\release_x64...
 xcopy /Y /Q "%TEMP_DIR%\*.dll" "%PROJECT_DIR%\bin\release_x64\" > nul
 if ERRORLEVEL 1 goto fail
 
+:: PROJ needs its proj.db at runtime, without it every EPSG lookup fails and georeferencing is dead.
+:: The archive does not carry it yet - copy it along as soon as it does.
+if exist "%TEMP_DIR%\proj\proj.db" (
+    echo Copying PROJ database to bin\debug and bin\release_x64...
+    xcopy /Y /Q /E /I "%TEMP_DIR%\proj" "%PROJECT_DIR%\bin\debug\proj\" > nul
+    if ERRORLEVEL 1 goto fail
+    xcopy /Y /Q /E /I "%TEMP_DIR%\proj" "%PROJECT_DIR%\bin\release_x64\proj\" > nul
+    if ERRORLEVEL 1 goto fail
+) else (
+    echo.
+    echo WARNING: gdal.7z contains no proj\proj.db.
+    echo          PROJ cannot resolve any EPSG code without it, so georeferenced DXF import
+    echo          will not work. The archive on the deployment server has to be extended.
+    echo.
+)
+
+if exist "%TEMP_DIR%\gdal-data" (
+    echo Copying gdal-data to bin\debug and bin\release_x64...
+    xcopy /Y /Q /E /I "%TEMP_DIR%\gdal-data" "%PROJECT_DIR%\bin\debug\gdal-data\" > nul
+    xcopy /Y /Q /E /I "%TEMP_DIR%\gdal-data" "%PROJECT_DIR%\bin\release_x64\gdal-data\" > nul
+)
+
 :: Copy import library to externals
 echo Copying gdal_i.lib to externals\gdal\lib...
 copy /Y "%TEMP_DIR%\lib\gdal_i.lib" "%PROJECT_DIR%\externals\gdal\lib\" > nul
