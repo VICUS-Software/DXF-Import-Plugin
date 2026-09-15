@@ -78,6 +78,9 @@ protected:
 	/*! Re-measures the dialog, the layout only knows its width-dependent height once it is up. */
 	void showEvent(QShowEvent * event) override;
 
+	/*! Keeps the minimum height in sync with the width, the info label wraps. */
+	void resizeEvent(QResizeEvent * event) override;
+
 private slots:
 	void on_comboBoxUnit_activated(int index);
 
@@ -116,6 +119,11 @@ private:
 
 	void updateImportButtonEnabledState();
 
+	/*! Drops the result of the last conversion, because the placement it computed no longer matches
+		the dialog. In detailed mode the import button is disabled until the user converts again.
+	*/
+	void invalidateConversion();
+
 	/*! Looks for a coordinate reference system of the DXF file and updates the georeferencing widgets. */
 	void detectGeoreferencing();
 
@@ -125,8 +133,11 @@ private:
 	/*! Writes a message into the georeferencing info label. */
 	void setGeoreferenceInfo(const QString & text, bool warning);
 
-	/*! Re-measures the dialog after its content changed height.
-		The dialog keeps a fixed size, so a longer info text would simply be cut off otherwise.
+	/*! Height the content needs at the given dialog width, including the wrapped info label. */
+	int contentHeightFor(int w) const;
+
+	/*! Re-measures the dialog after its content changed height and snaps to that height.
+		The dialog stays resizable, contentHeightFor() only provides the lower bound.
 	*/
 	void updateDialogHeight();
 
@@ -196,6 +207,9 @@ private:
 
 	/*! True if the drawing was placed through its coordinate reference system. */
 	bool					m_georeferenced = false;
+
+	/*! True while m_drawing holds the result of a conversion that matches the current dialog state. */
+	bool					m_converted = false;
 
 	/*! True if the project already has a world coordinate origin, which must not be moved. */
 	bool					m_haveProjectOrigin = false;

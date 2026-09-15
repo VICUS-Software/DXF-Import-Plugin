@@ -83,6 +83,7 @@ ImportDXFDialog::ImportResults ImportDXFDialog::importFile(const QString &fname)
 		m_ui->pushButtonImport->setEnabled(false);
 
 	m_filePath = fname;
+	m_converted = false;
 
 	QFileInfo finfo(fname);
 	m_ui->lineEditDrawingName->setText(finfo.fileName());
@@ -125,6 +126,7 @@ void ImportDXFDialog::on_pushButtonConvert_clicked() {
 	m_ui->progressBar->update();
 
 	QString log;
+	m_converted = false;
 	QFile fileName(m_filePath);
 	if (!fileName.exists()) {
 		throw QMessageBox::warning(this, tr("DXF Conversion"), tr("File %1 does not exist.").arg(fileName.fileName()));
@@ -306,13 +308,15 @@ void ImportDXFDialog::on_pushButtonConvert_clicked() {
 		m_georeferenced = false;
 
 		// neither the file nor the user named a system - see whether the data tells us
+		bool crsFieldEmpty = m_ui->lineEditCRS->text().trimmed().isEmpty();
 		bool inferred = false;
-		if (!m_ui->checkBoxGeoreference->isChecked() && m_ui->lineEditCRS->text().trimmed().isEmpty())
+		if (!m_ui->checkBoxGeoreference->isChecked() && crsFieldEmpty)
 			inferred = inferCoordinateSystem(log);
 
 		if (m_ui->checkBoxGeoreference->isChecked())
 			m_georeferenced = applyGeoreferencing(log);
-		else if (!inferred)
+		// with a system in the line edit the label already explains why it was not used, keep that message
+		else if (!inferred && crsFieldEmpty)
 			warnIfFarFromOrigin(log);
 
 		// the georeferenced offset is already absolute, only the centering offset is in drawing units
@@ -343,7 +347,8 @@ void ImportDXFDialog::on_pushButtonConvert_clicked() {
 	m_ui->progressBar->setFormat("Finished %p%");
 	m_ui->progressBar->setValue(4);
 
-	m_ui->pushButtonImport->setEnabled(success);
+	m_converted = success;
+	updateImportButtonEnabledState();
 	QMessageBox::information(this, tr("DXF-Import"), tr("DXF import successful. If the scaling factor is not set correctly, "
 														"you can adjust it by double-clicking the DXF node in the left navigation tree."));
 	setEnabled(true);
@@ -399,12 +404,31 @@ void ImportDXFDialog::setProjectWorldOrigin(const IBKMK::Vector3D & origin, int 
 
 void ImportDXFDialog::on_checkBoxGeoreference_toggled(bool /*checked*/) {
 	updateGeoreferenceControls();
+	invalidateConversion();
+}
+
+
+void ImportDXFDialog::invalidateConversion() {
+	if (!m_converted)
+		return;
+	m_converted = false;
+	m_georeferenced = false;
+	updateImportButtonEnabledState();
+	if (m_detailedMode)
+		setGeoreferenceInfo(tr("The placement changed, please convert again before importing."), false);
 }
 
 
 void ImportDXFDialog::on_lineEditCRS_editingFinished() {
 	QString crsText = m_ui->lineEditCRS->text().trimmed();
-	if (crsText.isEmpty() || crsText == m_coordinateSystem.m_name)
+	if (crsText == m_coordinateSystem.m_name)
+		return;
+
+	// applyGeoreferencing() places the drawing from the text in this line edit, so any change to it
+	// makes the last conversion stale - also when the user clears it or types something unusable
+	invalidateConversion();
+
+	if (crsText.isEmpty())
 		return;
 
 	Georeferencing::CoordinateSystem crs = Georeferencing::fromUserInput(crsText);
@@ -462,18 +486,39 @@ void ImportDXFDialog::showEvent(QShowEvent * event) {
 }
 
 
+int ImportDXFDialog::contentHeightFor(int w) const {
+	// The info label wraps its text, so its height depends on the width. sizeHint() does not know the
+	// width, only the layout does - asking it is what keeps a long message from being cut off.
+	const QLayout * l = layout();
+	int h = (l != nullptr && l->hasHeightForWidth()) ? l->heightForWidth(w) : sizeHint().height();
+	return std::max(h, minimumSizeHint().height());
+}
+
+
 void ImportDXFDialog::updateDialogHeight() {
 	QLayout * l = layout();
 	if (l == nullptr)
 		return;
 	l->activate();
 
-	// The info label wraps its text, so its height depends on the width. sizeHint() does not know the
-	// width, only the layout does - asking it is what keeps a long message from being cut off.
 	int w = width(); // keep the current width, only the height changed
-	int h = l->hasHeightForWidth() ? l->heightForWidth(w) : sizeHint().height();
-	h = std::max(h, minimumSizeHint().height());
-	setFixedSize(w, h);
+	int h = contentHeightFor(w);
+
+	// Snap to the height the content needs, but leave the dialog resizable - the log window in
+	// detailed mode is of little use in a window the user cannot enlarge.
+	setMinimumHeight(h);
+	setMaximumHeight(QWIDGETSIZE_MAX);
+	resize(w, h);
+}
+
+
+void ImportDXFDialog::resizeEvent(QResizeEvent * event) {
+	QDialog::resizeEvent(event);
+	// A narrower dialog makes the wrapping info label taller, so the lower bound has to follow the
+	// width - otherwise the text is clipped once the user drags the dialog narrow.
+	int h = contentHeightFor(width());
+	if (h != minimumHeight())
+		setMinimumHeight(h);
 }
 
 
@@ -776,7 +821,9 @@ void ImportDXFDialog::updateImportButtonEnabledState() {
 	bool valid = true;
 	if (m_ui->checkBoxCustomOrigin->isChecked())
 		valid = m_ui->lineEditCustomCenterX->isValid() && m_ui->lineEditCustomCenterY->isValid();
-	m_ui->pushButtonImport->setEnabled(valid);
+	// in simple mode the import button converts itself, in detailed mode the conversion must be
+	// up to date - otherwise the drawing would be imported with a placement the dialog no longer shows
+	m_ui->pushButtonImport->setEnabled(valid && (!m_detailedMode || m_converted));
 }
 
 
@@ -894,6 +941,8 @@ IBKMK::Vector3D ImportDXFDialog::boundingBox(const Drawing *drawing, IBKMK::Vect
 
 void ImportDXFDialog::on_comboBoxUnit_activated(int index) {
 	m_ui->comboBoxUnit->setCurrentIndex(index);
+	// the unit is the scaling factor, and georeferencing places the drawing through it
+	invalidateConversion();
 }
 
 
@@ -1719,7 +1768,7 @@ void ImportDXFDialog::on_checkBoxShowDetails_stateChanged(int arg1) {
 	m_ui->groupBox->setVisible(m_detailedMode);
 	m_ui->pushButtonConvert->setVisible(m_detailedMode);
 	m_ui->plainTextEditLogWindow->setVisible(m_detailedMode);
-	m_ui->pushButtonImport->setEnabled(!m_detailedMode);
+	updateImportButtonEnabledState();
 
 	updateDialogHeight();
 }
