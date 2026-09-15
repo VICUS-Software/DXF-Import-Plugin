@@ -94,6 +94,8 @@ private slots:
 
 	void on_checkBoxGeoreference_toggled(bool checked);
 
+	void on_lineEditCRS_editingFinished();
+
 private:
 	/*! Read a specified dxf file.
 		\param drawing VICUS Drawing, where all primitives are added

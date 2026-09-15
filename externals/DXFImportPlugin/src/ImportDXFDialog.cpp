@@ -284,6 +284,25 @@ void ImportDXFDialog::on_pushButtonConvert_clicked() {
 		m_georeferenced = false;
 		if (m_ui->checkBoxGeoreference->isChecked())
 			m_georeferenced = applyGeoreferencing(log);
+		else {
+			// A drawing given in projected map coordinates (UTM, Gauss-Krueger, ...) ends up millions of
+			// meters away from the project origin when it is imported unreferenced - that looks like an
+			// empty scene and is easy to mistake for a broken import, so point it out.
+			double FAR_FROM_ORIGIN = 10000; // no local CAD drawing sits 10 km from its own origin
+			IBKMK::Vector2D ref = referencePoint(m_drawing);
+			double refX = std::fabs(ref.m_x * m_drawing.m_scalingFactor);
+			double refY = std::fabs(ref.m_y * m_drawing.m_scalingFactor);
+			if (refX > FAR_FROM_ORIGIN || refY > FAR_FROM_ORIGIN) {
+				setGeoreferenceInfo(tr("The drawing sits at %L1 / %L2, which looks like projected map "
+									   "coordinates. Enter its coordinate reference system above to place "
+									   "it correctly - otherwise it ends up that far from the project "
+									   "origin and you will not see it.")
+									.arg(refX, 0, 'f', 0).arg(refY, 0, 'f', 0), true);
+				log += QString("Drawing center at %1 / %2 looks like projected map coordinates, "
+							   "but no coordinate reference system was given.\n")
+					   .arg(refX, 0, 'f', 0).arg(refY, 0, 'f', 0);
+			}
+		}
 
 		// the georeferenced offset is already absolute, only the centering offset is in drawing units
 		if (!m_georeferenced)
@@ -372,11 +391,32 @@ void ImportDXFDialog::on_checkBoxGeoreference_toggled(bool /*checked*/) {
 }
 
 
+void ImportDXFDialog::on_lineEditCRS_editingFinished() {
+	QString crsText = m_ui->lineEditCRS->text().trimmed();
+	if (crsText.isEmpty() || crsText == m_coordinateSystem.m_name)
+		return;
+
+	Georeferencing::CoordinateSystem crs = Georeferencing::fromUserInput(crsText);
+	if (!crs.isValid()) {
+		setGeoreferenceInfo(tr("Unknown coordinate reference system '%1'. Enter an EPSG code such as "
+							   "'EPSG:25832', or a WKT or PROJ definition.").arg(crsText), true);
+		return;
+	}
+
+	// the user supplied what the file did not carry, so switch georeferencing on
+	m_coordinateSystem = crs;
+	m_ui->lineEditCRS->setText(crs.m_name);
+	m_ui->checkBoxGeoreference->setChecked(true);
+	setGeoreferenceInfo(tr("Coordinate reference system %1 taken from your input.").arg(crs.m_name), false);
+	updateGeoreferenceControls();
+}
+
+
 void ImportDXFDialog::updateGeoreferenceControls() {
 	bool georeference = m_ui->checkBoxGeoreference->isChecked();
 
-	m_ui->labelCRS->setEnabled(georeference);
-	m_ui->lineEditCRS->setEnabled(georeference);
+	// The CRS field stays editable even with georeferencing switched off - a DXF without a .prj file
+	// and without an AcDbGeoData object can only be placed if the user supplies the CRS here.
 
 	// georeferencing dictates the placement, the centering options would fight it
 	m_ui->checkBoxMove->setEnabled(!georeference);
@@ -416,8 +456,9 @@ void ImportDXFDialog::detectGeoreferencing() {
 	if (!m_coordinateSystem.isValid()) {
 		m_ui->checkBoxGeoreference->setChecked(false);
 		m_ui->lineEditCRS->clear();
-		setGeoreferenceInfo(tr("No coordinate reference system found in the DXF file. Enter it manually, "
-							   "for example 'EPSG:25833', to place the drawing at its real world position."), false);
+		setGeoreferenceInfo(tr("No coordinate reference system found in the DXF file - neither a '.prj' file "
+							   "next to it nor an AcDbGeoData object. Enter the system above, for example "
+							   "'EPSG:25832', to place the drawing at its real world position."), false);
 	}
 	else {
 		m_ui->checkBoxGeoreference->setChecked(true);
