@@ -47,8 +47,13 @@ bool readProjectWorldOrigin(const QString & projectText, IBKMK::Vector3D & origi
 	if (originElement == nullptr || originElement->GetText() == nullptr)
 		return false;
 
+	// the context comes from SIM-VICUS, but a malformed document must never abort the import
 	try {
 		origin = IBKMK::Vector3D::fromString(originElement->GetText());
+
+		const char * zone = wco->Attribute("utmZone");
+		if (zone != nullptr)
+			utmZone = IBK::string2val<int>(std::string(zone));
 	}
 	catch (...) {
 		return false;
@@ -58,9 +63,6 @@ bool readProjectWorldOrigin(const QString & projectText, IBKMK::Vector3D & origi
 	if (origin.m_x == 0 && origin.m_y == 0)
 		return false;
 
-	const char * zone = wco->Attribute("utmZone");
-	if (zone != nullptr)
-		utmZone = IBK::string2val<int>(std::string(zone));
 	const char * northAttrib = wco->Attribute("north");
 	north = (northAttrib == nullptr) || (std::string(northAttrib) != "0" && std::string(northAttrib) != "false");
 
