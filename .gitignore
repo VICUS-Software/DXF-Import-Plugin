@@ -59,3 +59,9 @@ lib_x64
 /data/SimQuality_Analyse
 /data/SimVicus.vicus
 /data/SimVicus_2.vicus
+
+# GDAL/PROJ runtime files installed by build/cmake/download_gdal.bat
+/build/cmake/temp_gdal/
+/bin/*/proj/
+/bin/*/gdal-data/
+/externals/gdal/lib/*.lib
